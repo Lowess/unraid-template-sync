@@ -2,6 +2,8 @@
 
 A small, standard-library-only Go service that receives authenticated GitHub
 push webhooks and refreshes private Unraid Community Applications templates.
+On its first start it clones the configured repository into an empty mounted
+directory; later starts and webhooks fetch and reset that managed checkout.
 
 ```text
 GitHub webhook
@@ -45,16 +47,18 @@ GitHub's package settings.
 | `GITHUB_REPOSITORY` | `Lowess/docker-templates-unraid` | Accepted webhook repository |
 | `GITHUB_BRANCH` | `main` | Accepted push branch |
 | `GIT_REMOTE_URL` | public HTTPS repository URL | Source used by `git fetch` |
-| `REPO_DIR` | `/repo` | Mounted Git checkout |
+| `REPO_DIR` | `/repo` | Managed checkout, cloned when empty |
 | `SOURCE_SUBDIR` | `Lowess` | XML source beneath the checkout |
 | `DEST_DIR` | `/templates` | Private CA template destination |
 | `PORT` | `9000` | HTTP listener port |
 | `SYNC_ON_START` | `true` | Reconcile after container startup |
 | `GIT_CLEAN` | `true` | Remove untracked checkout files |
 
-The service deliberately fetches the public repository over HTTPS instead of
-mounting host SSH credentials. `GIT_CLEAN=true` matches the previous script and
-means local untracked files in the mounted checkout are deleted.
+The service deliberately clones and fetches the public repository over HTTPS
+instead of mounting host SSH credentials. No PAT is needed. If `/repo` has no
+`.git` metadata, it must be empty; the service refuses to overwrite unrelated
+files. `GIT_CLEAN=true` matches the previous script and means local untracked
+files in the managed checkout are deleted after it has been cloned.
 
 ## Endpoints
 

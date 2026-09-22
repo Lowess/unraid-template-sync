@@ -66,6 +66,79 @@ func TestSyncResetsCheckoutAndMirrorsOnlyXML(t *testing.T) {
 	assertMissing(t, filepath.Join(checkout, "untracked.txt"))
 }
 
+func TestSyncClonesAnEmptyRepositoryDirectory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	author := filepath.Join(root, "author")
+	checkout := filepath.Join(root, "managed-checkout")
+	destination := filepath.Join(root, "destination")
+
+	run(t, root, "git", "init", "--bare", remote)
+	run(t, root, "git", "clone", remote, author)
+	run(t, author, "git", "config", "user.email", "test@example.com")
+	run(t, author, "git", "config", "user.name", "Test")
+	run(t, author, "git", "switch", "-c", "main")
+	if err := os.Mkdir(filepath.Join(author, "Lowess"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(author, "Lowess", "one.xml"), "<one/>\n")
+	run(t, author, "git", "add", ".")
+	run(t, author, "git", "commit", "-m", "initial")
+	run(t, author, "git", "push", "-u", "origin", "main")
+	if err := os.Mkdir(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	config := Config{
+		GitHubBranch:      "main",
+		GitRemoteURL:      remote,
+		GitRemoteTracking: "origin",
+		RepoDir:           checkout,
+		SourceDir:         filepath.Join(checkout, "Lowess"),
+		DestinationDir:    destination,
+		SyncTimeout:       30 * time.Second,
+		GitClean:          true,
+	}
+	commit, err := NewGitSynchronizer(config).Sync(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit == "" {
+		t.Fatal("expected commit")
+	}
+	if _, err := os.Stat(filepath.Join(checkout, ".git")); err != nil {
+		t.Fatalf("expected managed Git checkout: %v", err)
+	}
+	assertContent(t, filepath.Join(destination, "one.xml"), "<one/>\n")
+}
+
+func TestSyncRefusesToOverwriteNonGitFiles(t *testing.T) {
+	root := t.TempDir()
+	checkout := filepath.Join(root, "managed-checkout")
+	if err := os.Mkdir(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(checkout, "keep.txt"), "do not delete\n")
+	config := Config{
+		GitHubBranch:      "main",
+		GitRemoteURL:      "https://example.invalid/repository.git",
+		GitRemoteTracking: "origin",
+		RepoDir:           checkout,
+		SourceDir:         filepath.Join(checkout, "Lowess"),
+		DestinationDir:    filepath.Join(root, "destination"),
+		SyncTimeout:       30 * time.Second,
+	}
+
+	_, err := NewGitSynchronizer(config).Sync(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("expected safe refusal, got %v", err)
+	}
+	assertContent(t, filepath.Join(checkout, "keep.txt"), "do not delete\n")
+}
+
 func run(t *testing.T, directory, name string, arguments ...string) string {
 	t.Helper()
 	command := exec.Command(name, arguments...)

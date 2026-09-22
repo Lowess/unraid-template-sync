@@ -30,9 +30,8 @@ func (s *GitSynchronizer) Sync(parent context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, s.config.SyncTimeout)
 	defer cancel()
 
-	gitDirectory := filepath.Join(s.config.RepoDir, ".git")
-	if info, err := os.Stat(gitDirectory); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%s is not a Git working tree", s.config.RepoDir)
+	if err := s.ensureRepository(ctx); err != nil {
+		return "", err
 	}
 	if info, err := os.Stat(s.config.SourceDir); err != nil || !info.IsDir() {
 		return "", fmt.Errorf("template source directory does not exist: %s", s.config.SourceDir)
@@ -57,19 +56,57 @@ func (s *GitSynchronizer) Sync(parent context.Context) (string, error) {
 	return s.git(ctx, "rev-parse", "--short", "HEAD")
 }
 
+func (s *GitSynchronizer) ensureRepository(ctx context.Context) error {
+	gitPath := filepath.Join(s.config.RepoDir, ".git")
+	if _, err := os.Stat(gitPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Git metadata: %w", err)
+	}
+
+	if err := os.MkdirAll(s.config.RepoDir, 0o755); err != nil {
+		return fmt.Errorf("create repository directory: %w", err)
+	}
+	entries, err := os.ReadDir(s.config.RepoDir)
+	if err != nil {
+		return fmt.Errorf("read repository directory: %w", err)
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("%s is not a Git checkout and is not empty; refusing to overwrite it", s.config.RepoDir)
+	}
+
+	_, err = s.runGit(
+		ctx,
+		"clone",
+		"clone",
+		"--branch", s.config.GitHubBranch,
+		"--single-branch",
+		"--origin", s.config.GitRemoteTracking,
+		"--", s.config.GitRemoteURL, s.config.RepoDir,
+	)
+	if err != nil {
+		return fmt.Errorf("bootstrap repository: %w", err)
+	}
+	return nil
+}
+
 func (s *GitSynchronizer) git(ctx context.Context, arguments ...string) (string, error) {
 	base := []string{
 		"-c", "safe.directory=" + s.config.RepoDir,
 		"-C", s.config.RepoDir,
 	}
-	command := exec.CommandContext(ctx, "git", append(base, arguments...)...)
+	return s.runGit(ctx, arguments[0], append(base, arguments...)...)
+}
+
+func (s *GitSynchronizer) runGit(ctx context.Context, operation string, arguments ...string) (string, error) {
+	command := exec.CommandContext(ctx, "git", arguments...)
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("git %s timed out", arguments[0])
+			return "", fmt.Errorf("git %s timed out", operation)
 		}
-		return "", fmt.Errorf("git %s failed: %w: %s", arguments[0], err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("git %s failed: %w: %s", operation, err, strings.TrimSpace(string(output)))
 	}
 	return strings.TrimSpace(string(output)), nil
 }
