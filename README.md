@@ -1,5 +1,9 @@
 # Unraid Template Sync
 
+<p align="center">
+  <img src="assets/unraid-template-sync.png" alt="Unraid Template Sync logo" width="320">
+</p>
+
 A small, standard-library-only Go service that receives authenticated GitHub
 push webhooks and refreshes private Unraid Community Applications templates.
 On its first start it clones the configured repository into an empty mounted
